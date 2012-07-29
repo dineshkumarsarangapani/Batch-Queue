@@ -1,0 +1,123 @@
+<?php
+
+/**
+ * @file This module will allow batch processing
+ * for queue.
+ */
+
+
+/**
+ * Implementation of queue manager
+ *
+ * @return array
+ */
+function batch_queue_queue_info() {
+
+  $queues = system_defined_queues();
+
+  $return_queue = array();
+
+  foreach ($queues as $queue_name => $queue_value) {
+    $return_queue[$queue_name] = array(
+      'title' => $queue_value['worker callback'],
+      'batch' => array(
+        'operations' => array(array('process_batch_queue', array($queue_value['worker callback']))),
+        'finished' => 'batch_queue_batch_finished',
+        'title' => t('Processing !queue_name queue', array('!queue_name' => $queue_value['worker callback'])),
+        'init_message' => t('Starting !queue_name.Please wait...', array('!queue_name' => $queue_value['worker callback'])),
+      ),
+    );
+  }
+
+  return $return_queue;
+}
+
+/**
+ * Get queues defined with hook_cron_queue_info().
+ *
+ * @return Array of queues available in hook
+ */
+function system_defined_queues() {
+  $queues = &drupal_static(__FUNCTION__);
+  if (!isset($queues)) {
+    // Grab the defined cron queues.
+    $queues = module_invoke_all('cron_queue_info');
+    drupal_alter('cron_queue_info', $queues);
+  }
+  return $queues;
+}
+
+/**
+ * Batch process function which will be initiated
+ * from queue manager
+ *
+ */
+function process_batch_queue($queue, $queue_name, &$context) {
+
+  // Grab the defined cron queues.
+  $queues = system_defined_queues();
+  if (!($info = $queues[$queue_name])) {
+    return;
+  }
+
+
+  // Work off queues.
+  if (!isset($context['sandbox']['completed'])) {
+    $context['sandbox']['completed'] = 0;
+    $context['results']['num_items'] = 0;
+    $context['sandbox']['total'] = $queue->numberOfItems();
+    $context['results']['queue_name'] = $queue_name;
+  }
+
+  $batch = &batch_get();
+
+  $started = db_select('batch', 'b')
+     ->fields('b', array('timestamp'))
+     ->condition('bid', $batch['id'])
+     ->execute()
+     ->fetchCol();
+
+  // Find out when we started
+  $started = $started[0];
+  $function = $info['worker callback'];
+  $end = time() + (isset($info['time']) ? $info['time'] : 15);
+  while (time() < $end && ($item = $queue->claimItem())) {
+    $function($item->data);
+    $queue->deleteItem($item);
+    $context['sandbox']['completed']++;
+    $context['results']['num_items']++;
+  }
+
+  $elapsed = time() - $started;
+  $time_left = ($elapsed / $context['sandbox']['completed']) * ($context['sandbox']['total'] - $context['sandbox']['completed']);
+
+  // Update Batch API status.
+  $context['finished'] = empty($context['sandbox']['total']) ? 1 : $context['sandbox']['completed'] / $context['sandbox']['total'];
+  $context['message'] = t('Now processing queue !queue... <br />
+                             Estimated time remaining: %time<br />
+                             Processed !count of !total  ', array('!queue' => $queue_name, '%time' => format_interval($time_left),
+                                      '!count' => $context['sandbox']['completed'], '!total' => $context['sandbox']['total']));
+}
+
+
+/**
+ * Function to set the drupal set message
+ * after a batch is being processed
+ *
+ * @param boolean $success
+ * @param array $results
+ * @param array $operations
+ */
+function batch_queue_batch_finished($success, $results, $operations) {
+    if ($success) {
+    // Here we do something meaningful with the results.
+    $message = t('!num_items items processed in queue name !queue_name', array('!num_items' => $results['num_items'], '!queue_name' => $results['queue_name']));
+  }
+  else {
+    // An error occurred.
+    // $operations contains the operations that remained unprocessed.
+    $error_operation = reset($operations);
+    $message = t('An error occurred while processing %error_operation with arguments: @arguments', array('%error_operation' => $error_operation[0], '@arguments' => print_r($error_operation[1], TRUE)));
+  }
+  drupal_set_message($message);
+}

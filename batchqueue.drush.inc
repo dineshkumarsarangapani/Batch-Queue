@@ -1,0 +1,76 @@
+<?php
+/**
+ * Implements hook_drush_help().
+ */
+function batchqueue_drush_help($section) {
+  switch ($section) {
+    case 'drush:batch-queue-run':
+     return dt('Run the background process for batch');
+  }
+}
+
+/**
+ * Implements hook_drush_command().
+ */
+function batchqueue_drush_command() {
+  $items['batch-queue-run'] = array(
+    'bootstrap' => DRUSH_BOOTSTRAP_DRUPAL_FULL,
+    'description' => 'Run a specific queue by name',
+    'callback' => 'batchqueue_drush_batch_queue_run',
+    'arguments' => array(
+      'queue_name' => 'The name of the queue to run, as defined in hook_queue_info().',
+    ),
+  );
+
+  return $items;
+}
+
+/**
+ * Queue runner that fires off of hook_queue_info() instead of
+ * hook_cron_queue_info(). TODO make this as an upstream patch to
+ * Drupal Queue and core.
+ */
+function batchqueue_drush_batch_queue_run($queue_name) {
+	
+	
+  if (!$queue_name) {
+    drush_set_error('DRUSH_QUEUE_ERROR', dt('Must provide a queue name'));
+  }
+  // Get all queues.
+  $queues = drush_queue_get_queues();
+
+  if (isset($queues[$queue_name])) {
+    if (drush_drupal_major_version() == 6) {
+      drupal_queue_include();
+    }
+
+    $queue = DrupalQueue::get($queue_name);
+    $batch = array(
+      'operations' => array(
+        array(
+          'process_batch_queue',
+          array(
+            $queue,
+            $queue_name,
+          ),
+        ),
+      ),
+      'finished' => 'batch_queue_batch_finished',
+      'title' => t('Processing !queue_name queue', array('!queue_name' => $queue_name)),
+      'init_message' => t('Starting !queue_name.Please wait...', array('!queue_name' => $queue_name)),
+      'file' => drupal_get_path('module', 'batchqueue') . '/batchqueue.module'
+    );
+    
+    batch_set($batch);
+    $batch =& batch_get();
+    $batch['progressive'] = FALSE;
+    
+    drush_backend_batch_process();
+  }
+  else {
+    drush_set_error('DRUSH_QUEUE_ERROR', dt('Could not find the !name queue.', array('!name' => $queue_name)));
+  }
+}
+
+
+

@@ -1,0 +1,8 @@
+name = "Batch queue"
+description = "A Batch process for queue from the queue manager"
+package = target audience
+core = 7.x
+files[] = batch_queue.module
+dependencies[] = queue_ui
+
+

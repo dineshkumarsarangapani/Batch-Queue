@@ -45,7 +45,7 @@ function batchqueue_drush_batch_queue_run($queue_name) {
     }
 
     $queue = DrupalQueue::get($queue_name);
-    $number_of_items = $queue->numberOfItems();
+     $number_of_items = $queue->numberOfItems();
 
     if (!$number_of_items) {
       return;
